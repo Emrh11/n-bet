@@ -1,20 +1,22 @@
-import { useState, useEffect } from 'react';
-import { Calendar, ChevronLeft, ChevronRight, Download, Filter, X, Trash2, Wand2, Loader2 } from 'lucide-react';
-import { getAllShiftDefinitions } from '../../services/shiftDefinitionsService';
-import { getAllPersonnel } from '../../services/personnelService';
-import { getShiftsByMonth, createShift, deleteShift, createBulkShifts, clearMonthShifts } from '../../services/shiftsService';
-import type { ShiftDefinition } from '../../services/shiftDefinitionsService';
+import { Calendar, ChevronLeft, ChevronRight, Download, Filter, Trash2, Wand2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import type { Personnel } from '../../services/personnelService';
+import { getAllPersonnel } from '../../services/personnelService';
+import type { ShiftDefinition } from '../../services/shiftDefinitionsService';
+import { getAllShiftDefinitions } from '../../services/shiftDefinitionsService';
 import type { ShiftAPI } from '../../services/shiftsService';
+import { clearMonthShifts, createBulkShifts, createShift, deleteShift, getShiftsByMonth } from '../../services/shiftsService';
+import { getAvatarUrl } from '../../utils/avatarUtils';
+import { calculateStaffHakedis } from '../../utils/hakedisUtils';
 
-interface ShiftAssignment {
+export interface ShiftAssignment {
     id?: number;
     staffId: number;
     shiftCode: string;
     shiftDefinitionId?: number | null;
 }
 
-interface ShiftsMap {
+export interface ShiftsMap {
     [date: string]: ShiftAssignment[];
 }
 
@@ -27,12 +29,15 @@ const ShiftSchedulerContent = ({ userRole }: ShiftSchedulerContentProps) => {
     const [staffList, setStaffList] = useState<Personnel[]>([]);
     const [currentDate, setCurrentDate] = useState(new Date());
     const [shifts, setShifts] = useState<ShiftsMap>({});
-    const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
+    const [, setIsLoading] = useState(true);
+    const [, setIsSaving] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedStaffId, setSelectedStaffId] = useState<number | null>(null);
     const [selectedDate, setSelectedDate] = useState<string | null>(null);
     const [selectedShiftType, setSelectedShiftType] = useState('');
+
+    // Current user ID for highlighting in Excel export
+    const currentUserId = Number(JSON.parse(localStorage.getItem('userData') || '{}')?.id) || 0;
 
     // Fetch shift definitions and personnel from API
     useEffect(() => {
@@ -410,24 +415,478 @@ const ShiftSchedulerContent = ({ userRole }: ShiftSchedulerContentProps) => {
     };
 
     const calculateMonthlyTotal = (staffId: number) => {
-        let total = 0;
+        const month = currentDate.getMonth() + 1;
+        const year = currentDate.getFullYear();
+        const hakedis = calculateStaffHakedis(staffId, month, year, shifts, shiftDefinitions);
+        return hakedis.totalExcessHours - hakedis.totalMissingHours; // Net = Fazla - Eksik
+    };
+
+
+    // Excel Export - Full Month Professional Design
+    const exportScheduleToExcel = async () => {
+        const ExcelJS = await import('exceljs');
+        const { saveAs } = await import('file-saver');
+
+        const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+        const dayNamesExcel = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+        const monthName = monthNames[currentDate.getMonth()];
+        const year = currentDate.getFullYear();
+        const today = new Date();
+        const totalColumns = days + 2;
+
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'Nöbet Yönetim Sistemi';
+        workbook.created = new Date();
+
+        const worksheet = workbook.addWorksheet('Nöbet Çizelgesi', {
+            properties: { tabColor: { argb: '10B981' } },
+            pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
+        });
+
+        const colors = {
+            primary: '0D9488', primaryDark: '115E59', primaryLight: 'CCFBF1',
+            dark: '1F2937', medium: '6B7280', light: 'F3F4F6', white: 'FFFFFF',
+            weekendBg: 'FEF2F2', weekendHeader: 'FECACA',
+            nobetBg: 'FEE2E2', nobetText: 'DC2626',
+            nobetErtesiBg: 'D1FAE5', nobetErtesiText: '059669',
+            currentUserBg: 'FEF3C7', currentUserAccent: 'FDE68A', currentUserText: '92400E',
+            totalBg: 'ECFDF5', totalText: '065F46'
+        };
+
+        const thinBorder = {
+            top: { style: 'thin' as const, color: { argb: 'E5E7EB' } },
+            left: { style: 'thin' as const, color: { argb: 'E5E7EB' } },
+            bottom: { style: 'thin' as const, color: { argb: 'E5E7EB' } },
+            right: { style: 'thin' as const, color: { argb: 'E5E7EB' } }
+        };
+
+        const getDayNameForDate = (day: number) => {
+            const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+            return dayNamesExcel[date.getDay()];
+        };
+
+        const isWeekend = (day: number) => {
+            const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+            return date.getDay() === 0 || date.getDay() === 6;
+        };
+
+        const getShiftStyle = (code: string, isCurrentUser: boolean) => {
+            if (isCurrentUser) return { bg: colors.currentUserAccent, text: colors.currentUserText };
+            if (code === 'N') return { bg: colors.nobetBg, text: colors.nobetText };
+            if (code === 'NE') return { bg: colors.nobetErtesiBg, text: colors.nobetErtesiText };
+            return { bg: colors.nobetErtesiBg, text: colors.nobetErtesiText };
+        };
+
+        const getStaffNobetCount = (staffId: number) => {
+            let count = 0;
+            for (let day = 1; day <= days; day++) {
+                const dayShifts = getStaffShiftsForDay(staffId, day);
+                dayShifts.forEach(s => { if (s.shiftCode === 'N') count++; });
+            }
+            return count;
+        };
+
+        let totalNobetCount = 0;
+        let totalNobetErtesiCount = 0;
+        staffList.forEach(staff => {
+            for (let day = 1; day <= days; day++) {
+                const dayShifts = getStaffShiftsForDay(staff.id, day);
+                dayShifts.forEach(s => {
+                    if (s.shiftCode === 'N') totalNobetCount++;
+                    if (s.shiftCode === 'NE') totalNobetErtesiCount++;
+                });
+            }
+        });
+
+        let rowIndex = 1;
+
+        // Title
+        worksheet.mergeCells(rowIndex, 1, rowIndex, totalColumns);
+        const titleCell = worksheet.getCell(rowIndex, 1);
+        titleCell.value = `📋 ${monthName.toUpperCase()} ${year} NÖBET ÇİZELGESİ`;
+        titleCell.font = { bold: true, size: 16, color: { argb: colors.white } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primaryDark } };
+        worksheet.getRow(rowIndex).height = 32;
+        rowIndex++;
+
+        // Info Bar
+        worksheet.mergeCells(rowIndex, 1, rowIndex, totalColumns);
+        const infoCell = worksheet.getCell(rowIndex, 1);
+        infoCell.value = `📅 ${today.toLocaleDateString('tr-TR')} ${today.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}   •   👥 ${staffList.length} Personel   •   🔴 ${totalNobetCount} Nöbet   •   🟢 ${totalNobetErtesiCount} Nöbet Ertesi`;
+        infoCell.font = { size: 10, color: { argb: colors.medium } };
+        infoCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        infoCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.light } };
+        worksheet.getRow(rowIndex).height = 22;
+        rowIndex += 2;
+
+        // Day Numbers Header
+        const dayNumberRow = worksheet.getRow(rowIndex);
+        dayNumberRow.getCell(1).value = 'Personel';
+        dayNumberRow.getCell(1).font = { bold: true, size: 10, color: { argb: colors.white } };
+        dayNumberRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primaryDark } };
+        dayNumberRow.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+        dayNumberRow.getCell(1).border = thinBorder;
+
         for (let day = 1; day <= days; day++) {
-            const dayShifts = getStaffShiftsForDay(staffId, day);
-            const dayName = getDayName(day);
-            dayShifts.forEach(shift => {
-                const shiftDef = shiftDefinitions.find(d => d.code === shift.shiftCode);
-                if (shiftDef && shiftDef.overtime) {
-                    const dayKeyMap: { [key: string]: keyof typeof shiftDef.overtime } = {
-                        'PZT': 'pzt', 'SAL': 'sal', 'ÇAR': 'car', 'PER': 'per', 'CUM': 'cum', 'CMT': 'cmt', 'PAZ': 'paz'
-                    };
-                    const dayKey = dayKeyMap[dayName];
-                    if (dayKey) {
-                        total += shiftDef.overtime[dayKey] || 0;
+            const cell = dayNumberRow.getCell(day + 1);
+            cell.value = day;
+            cell.font = { bold: true, size: 9, color: { argb: isWeekend(day) ? colors.nobetText : colors.dark } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isWeekend(day) ? colors.weekendHeader : colors.light } };
+            cell.border = thinBorder;
+        }
+
+        dayNumberRow.getCell(days + 2).value = 'N';
+        dayNumberRow.getCell(days + 2).font = { bold: true, size: 9, color: { argb: colors.white } };
+        dayNumberRow.getCell(days + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.nobetText } };
+        dayNumberRow.getCell(days + 2).alignment = { horizontal: 'center', vertical: 'middle' };
+        dayNumberRow.getCell(days + 2).border = thinBorder;
+        worksheet.getRow(rowIndex).height = 22;
+        rowIndex++;
+
+        // Day Names Row
+        const dayNameRow = worksheet.getRow(rowIndex);
+        dayNameRow.getCell(1).value = '';
+        dayNameRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primaryLight } };
+        dayNameRow.getCell(1).border = thinBorder;
+
+        for (let day = 1; day <= days; day++) {
+            const cell = dayNameRow.getCell(day + 1);
+            cell.value = getDayNameForDate(day);
+            cell.font = { size: 8, italic: true, color: { argb: isWeekend(day) ? colors.nobetText : colors.medium } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: isWeekend(day) ? colors.weekendBg : colors.light } };
+            cell.border = thinBorder;
+        }
+
+        dayNameRow.getCell(days + 2).value = 'Sayı';
+        dayNameRow.getCell(days + 2).font = { size: 8, italic: true, color: { argb: colors.totalText } };
+        dayNameRow.getCell(days + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.totalBg } };
+        dayNameRow.getCell(days + 2).alignment = { horizontal: 'center', vertical: 'middle' };
+        dayNameRow.getCell(days + 2).border = thinBorder;
+        worksheet.getRow(rowIndex).height = 18;
+        rowIndex++;
+
+        // Data Rows
+        staffList.forEach((staff, idx) => {
+            const row = worksheet.getRow(rowIndex);
+            const isCurrentUser = staff.id === currentUserId;
+            const baseBg = isCurrentUser ? colors.currentUserBg : (idx % 2 === 0 ? colors.white : colors.light);
+            const nobetCount = getStaffNobetCount(staff.id);
+
+            row.getCell(1).value = (isCurrentUser ? '⭐ ' : '') + staff.name;
+            row.getCell(1).font = { bold: true, size: 9, color: { argb: isCurrentUser ? colors.currentUserText : colors.dark } };
+            row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: baseBg } };
+            row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+            row.getCell(1).border = thinBorder;
+
+            for (let day = 1; day <= days; day++) {
+                const dayShifts = getStaffShiftsForDay(staff.id, day);
+                const codes = dayShifts.map(s => s.shiftCode).join(',');
+                const cell = row.getCell(day + 1);
+                cell.value = codes || '·';
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.border = thinBorder;
+
+                if (codes) {
+                    const mainCode = dayShifts[0]?.shiftCode || '';
+                    const style = getShiftStyle(mainCode, isCurrentUser);
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: style.bg } };
+                    cell.font = { bold: true, size: 9, color: { argb: style.text } };
+                } else {
+                    cell.font = { size: 8, color: { argb: 'D1D5DB' } };
+                    if (isCurrentUser) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: baseBg } };
+                    else if (isWeekend(day)) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.weekendBg } };
+                    else cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: baseBg } };
+                }
+            }
+
+            row.getCell(days + 2).value = nobetCount;
+            row.getCell(days + 2).font = { bold: true, size: 10, color: { argb: colors.totalText } };
+            row.getCell(days + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.totalBg } };
+            row.getCell(days + 2).alignment = { horizontal: 'center', vertical: 'middle' };
+            row.getCell(days + 2).border = thinBorder;
+            worksheet.getRow(rowIndex).height = 20;
+            rowIndex++;
+        });
+
+        // Totals Row
+        const totalsRow = worksheet.getRow(rowIndex);
+        totalsRow.getCell(1).value = '📊 TOPLAM';
+        totalsRow.getCell(1).font = { bold: true, size: 10, color: { argb: colors.white } };
+        totalsRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primaryDark } };
+        totalsRow.getCell(1).alignment = { horizontal: 'left', vertical: 'middle' };
+        totalsRow.getCell(1).border = thinBorder;
+
+        for (let day = 1; day <= days; day++) {
+            let dayTotal = 0;
+            staffList.forEach(staff => {
+                const dayShifts = getStaffShiftsForDay(staff.id, day);
+                dayShifts.forEach(s => { if (s.shiftCode === 'N') dayTotal++; });
+            });
+            const cell = totalsRow.getCell(day + 1);
+            cell.value = dayTotal || '·';
+            cell.font = { bold: true, size: 9, color: { argb: dayTotal ? colors.primary : 'D1D5DB' } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primaryLight } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+            cell.border = thinBorder;
+        }
+
+        totalsRow.getCell(days + 2).value = totalNobetCount;
+        totalsRow.getCell(days + 2).font = { bold: true, size: 11, color: { argb: colors.white } };
+        totalsRow.getCell(days + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.primary } };
+        totalsRow.getCell(days + 2).alignment = { horizontal: 'center', vertical: 'middle' };
+        totalsRow.getCell(days + 2).border = thinBorder;
+        worksheet.getRow(rowIndex).height = 24;
+        rowIndex += 2;
+
+        // Legend
+        worksheet.mergeCells(rowIndex, 1, rowIndex, Math.min(days + 2, 15));
+        const legendCell = worksheet.getCell(rowIndex, 1);
+        legendCell.value = '📌 Gösterim: N = Nöbet (Kırmızı) | NE = Nöbet Ertesi (Yeşil) | ⭐ = Sizin Satırınız (Sarı)';
+        legendCell.font = { size: 9, color: { argb: colors.medium } };
+        legendCell.alignment = { horizontal: 'left', vertical: 'middle' };
+        legendCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.light } };
+        worksheet.getRow(rowIndex).height = 20;
+
+        // Column widths
+        worksheet.getColumn(1).width = 20;
+        for (let i = 2; i <= days + 1; i++) worksheet.getColumn(i).width = 4;
+        worksheet.getColumn(days + 2).width = 5;
+
+        worksheet.views = [{ state: 'frozen', xSplit: 1, ySplit: 5 }];
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        saveAs(blob, `Nobet_Cizelgesi_${monthName}_${year}.xlsx`);
+    };
+
+    // Hakediş (Overtime Accrual) Export - Multi-sheet per personnel
+    const exportHakedisToExcel = async () => {
+        const ExcelJS = await import('exceljs');
+        const { saveAs } = await import('file-saver');
+
+        const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+        const monthName = monthNames[currentDate.getMonth()];
+        const year = currentDate.getFullYear();
+        const today = new Date();
+
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'Nöbet Yönetim Sistemi';
+        workbook.created = new Date();
+
+        // Colors
+        const colors = {
+            headerBg: '10B981',
+            headerText: 'FFFFFF',
+            subHeaderBg: '34D399',
+            titleBg: '065F46',
+            dark: '1F2937',
+            medium: '6B7280',
+            light: 'F3F4F6',
+            white: 'FFFFFF',
+            weekendBg: 'FEF2F2',
+            nobetBg: 'FEE2E2',
+            nobetText: 'DC2626',
+            nobetErtesiBg: 'D1FAE5',
+            nobetErtesiText: '059669',
+            summaryBg: 'ECFDF5',
+            summaryText: '065F46',
+            excessBg: 'DCFCE7',
+            excessText: '166534',
+            missingBg: 'FEE2E2',
+            missingText: 'DC2626'
+        };
+
+        const thinBorder = {
+            top: { style: 'thin' as const, color: { argb: 'D1D5DB' } },
+            left: { style: 'thin' as const, color: { argb: 'D1D5DB' } },
+            bottom: { style: 'thin' as const, color: { argb: 'D1D5DB' } },
+            right: { style: 'thin' as const, color: { argb: 'D1D5DB' } }
+        };
+
+        // Create a sheet for each staff member
+        staffList.forEach(staff => {
+            // Sanitize sheet name (Excel doesn't allow certain characters)
+            const sheetName = staff.name.replace(/[*?:/\\[\]]/g, '').substring(0, 31);
+            const worksheet = workbook.addWorksheet(sheetName, {
+                properties: { tabColor: { argb: colors.headerBg } }
+            });
+
+            let rowIndex = 1;
+
+            // Title
+            worksheet.mergeCells(rowIndex, 1, rowIndex, 10);
+            const titleCell = worksheet.getCell(rowIndex, 1);
+            titleCell.value = '🏆 NÖBETÇİ PERSONEL RAPORU';
+            titleCell.font = { bold: true, size: 14, color: { argb: colors.headerText } };
+            titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+            titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.titleBg } };
+            worksheet.getRow(rowIndex).height = 28;
+            rowIndex++;
+
+            // Info row
+            worksheet.mergeCells(rowIndex, 1, rowIndex, 3);
+            worksheet.getCell(rowIndex, 1).value = `👤 Personel: ${staff.name}`;
+            worksheet.getCell(rowIndex, 1).font = { bold: true, size: 11, color: { argb: colors.dark } };
+            worksheet.getCell(rowIndex, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.light } };
+
+            worksheet.mergeCells(rowIndex, 4, rowIndex, 6);
+            worksheet.getCell(rowIndex, 4).value = `📅 Dönem: ${monthName} ${year}`;
+            worksheet.getCell(rowIndex, 4).font = { size: 10, color: { argb: colors.medium } };
+            worksheet.getCell(rowIndex, 4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.light } };
+
+            worksheet.mergeCells(rowIndex, 7, rowIndex, 10);
+            worksheet.getCell(rowIndex, 7).value = `📊 Rapor Tarihi: ${today.toLocaleDateString('tr-TR')} ${today.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}`;
+            worksheet.getCell(rowIndex, 7).font = { size: 10, color: { argb: colors.medium } };
+            worksheet.getCell(rowIndex, 7).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.light } };
+            worksheet.getRow(rowIndex).height = 22;
+            rowIndex += 2;
+
+            // Column Headers
+            const headers = ['📆 Tarih', 'Gün', 'Personel', '⏰ Giriş', '⏰ Çıkış', '🏷️ Vardiya', '⏱️ Çalışma', '📊 Beklenen', '❌ Eksik', '💰 Fazla'];
+            // Header styling
+            const headerRow = worksheet.getRow(4);
+            headers.forEach((h, i) => {
+                const cell = headerRow.getCell(i + 1);
+                cell.value = h;
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.headerBg } };
+                cell.font = { bold: true, color: { argb: colors.headerText }, size: 10 };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.border = thinBorder;
+                // Column widths
+                worksheet.getColumn(i + 1).width = i === 0 ? 15 : i === 5 ? 20 : 12;
+            });
+
+            // Summary titles on the right (Moved to L column)
+            worksheet.getCell('L4').value = 'Top. Çalışma';
+            worksheet.getCell('L5').value = 'Top. Beklenen';
+            worksheet.getCell('L6').value = 'Top. Eksik';
+            worksheet.getCell('L7').value = 'Top. Fazla';
+            worksheet.getCell('L8').value = 'Net F.';
+            ['L4', 'L5', 'L6', 'L7', 'L8'].forEach(cellRef => {
+                const cell = worksheet.getCell(cellRef);
+                cell.font = { bold: true, size: 9, color: { argb: colors.summaryText } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: colors.summaryBg } };
+                cell.alignment = { horizontal: 'left', vertical: 'middle' };
+                cell.border = thinBorder;
+                worksheet.getColumn('L').width = 18;
+                worksheet.getColumn('M').width = 15;
+            });
+            // Net F. özel stil
+            worksheet.getCell('L8').font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+            worksheet.getCell('L8').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+
+            worksheet.getRow(rowIndex).height = 24;
+            rowIndex++;
+
+            // Data rows - one for each day
+            // Accumulators removed as they are now provided by calculateStaffHakedis
+
+            // Use the centralized calculation logic
+            const hakedisSummary = calculateStaffHakedis(staff.id, currentDate.getMonth() + 1, currentDate.getFullYear(), shifts, shiftDefinitions);
+
+            // Populate rows from the hakedis details
+            hakedisSummary.dailyDetails.forEach((detail, dayIndex) => {
+                const day = dayIndex + 1;
+                const row = worksheet.getRow(rowIndex);
+                const baseBg = detail.isWeekend ? colors.weekendBg : (day % 2 === 0 ? colors.light : colors.white);
+                const isNobet = detail.shiftType.includes('Nöbet') && !detail.shiftType.includes('Ertesi');
+                const isNobetErtesi = detail.shiftType.includes('Ertesi');
+                const isNobetDevam = detail.shiftType.includes('devam');
+
+                // Date column
+                row.getCell(1).value = detail.date.split('-').reverse().join('.');
+                row.getCell(2).value = detail.dayName;
+                row.getCell(3).value = staff.name;
+                row.getCell(4).value = detail.entryTime;
+                row.getCell(5).value = detail.exitTime;
+                row.getCell(6).value = detail.shiftType;
+                row.getCell(7).value = Math.round(detail.workHours * 10) / 10;
+                row.getCell(8).value = detail.expectedHours;
+                row.getCell(9).value = detail.missingHours > 0 ? Math.round(detail.missingHours * 10) / 10 : '-';
+                row.getCell(10).value = detail.excessHours > 0 ? Math.round(detail.excessHours * 10) / 10 : '-';
+
+                // Formatting
+                for (let col = 1; col <= 10; col++) {
+                    const cell = row.getCell(col);
+                    cell.border = thinBorder;
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: baseBg } };
+                    cell.alignment = { horizontal: col === 3 ? 'left' : 'center', vertical: 'middle' };
+                    cell.font = { size: 9, color: { argb: colors.dark } };
+
+                    if (col === 1) cell.font.bold = true;
+                    if (col === 2 && detail.isWeekend) cell.font.color = { argb: colors.nobetText };
+                    if (col === 6) {
+                        cell.font.bold = true;
+                        if (isNobet || isNobetDevam) cell.font.color = { argb: colors.nobetText };
+                        if (isNobetErtesi) cell.font.color = { argb: colors.nobetErtesiText };
+                    }
+                    if (col === 9 && detail.missingHours > 0) {
+                        cell.font.bold = true;
+                        cell.font.color = { argb: colors.missingText };
+                    }
+                    if (col === 10 && detail.excessHours > 0) {
+                        cell.font.bold = true;
+                        cell.font.color = { argb: colors.excessText };
                     }
                 }
+
+                rowIndex++;
             });
-        }
-        return total;
+
+            // Global summary totals in values column (M)
+            worksheet.getCell('M4').value = Math.round(hakedisSummary.totalWorkHours * 10) / 10;
+            worksheet.getCell('M5').value = hakedisSummary.totalExpectedHours;
+            worksheet.getCell('M6').value = Math.round(hakedisSummary.totalMissingHours * 10) / 10;
+            worksheet.getCell('M7').value = Math.round(hakedisSummary.totalExcessHours * 10) / 10;
+
+            // Net Fazla hesaplama
+            const netFazla = hakedisSummary.totalExcessHours - hakedisSummary.totalMissingHours;
+            worksheet.getCell('M8').value = Math.round(netFazla * 10) / 10;
+
+            // Styling summary values column
+            ['M4', 'M5', 'M6', 'M7'].forEach((cellRef, idx) => {
+                const c = worksheet.getCell(cellRef);
+                const textColors = [colors.summaryText, colors.medium, colors.missingText, colors.excessText];
+
+                c.font = { bold: true, color: { argb: textColors[idx] } };
+                c.alignment = { horizontal: 'center' };
+                c.border = thinBorder;
+                c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF' } };
+            });
+
+            // Net F. özel stil (koyu mavi arka plan, beyaz yazı)
+            worksheet.getCell('M8').font = { bold: true, size: 11, color: { argb: 'FFFFFFFF' } };
+            worksheet.getCell('M8').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2563EB' } };
+            worksheet.getCell('M8').alignment = { horizontal: 'center' };
+            worksheet.getCell('M8').border = thinBorder;
+
+
+            worksheet.getColumn('P').width = 22;
+            worksheet.getColumn('Q').width = 15;
+
+            // Column widths
+            worksheet.getColumn(1).width = 12;
+            worksheet.getColumn(2).width = 12;
+            worksheet.getColumn(3).width = 18;
+            worksheet.getColumn(4).width = 8;
+            worksheet.getColumn(5).width = 8;
+            worksheet.getColumn(6).width = 14;
+            worksheet.getColumn(7).width = 10;
+            worksheet.getColumn(8).width = 10;
+            worksheet.getColumn(9).width = 8;
+            worksheet.getColumn(10).width = 8;
+            worksheet.getColumn(11).width = 3;
+            worksheet.getColumn(12).width = 14;
+            worksheet.getColumn(13).width = 12;
+        });
+
+        // Generate file
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        saveAs(blob, `Personel_Raporu_${monthName}_${year}_${today.toLocaleDateString('tr-TR').replace(/\./g, '')}_${today.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }).replace(':', '')}.xlsx`);
     };
 
     const existingShiftsForSelection = selectedDate && selectedStaffId
@@ -537,15 +996,36 @@ const ShiftSchedulerContent = ({ userRole }: ShiftSchedulerContentProps) => {
                             <Trash2 size={14} /> Ayı Temizle
                         </button>
                     )}
-                    <button className="phase-button">
+                    <button onClick={exportScheduleToExcel} className="phase-button">
                         <Download size={14} /> Excel
                     </button>
+                    {userRole === 'admin' && (
+                        <button
+                            onClick={exportHakedisToExcel}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem',
+                                padding: '0.5rem 0.75rem',
+                                borderRadius: '0.5rem',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                cursor: 'pointer',
+                                color: 'rgb(16, 185, 129)',
+                                transition: 'all 200ms'
+                            }}
+                        >
+                            <Download size={14} /> Hakediş
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Schedule Table */}
             <div className="phase-card" style={{ overflow: 'hidden' }}>
-                <div style={{ overflowX: 'auto' }}>
+                <div className="thin-scrollbar" style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', fontSize: '0.75rem', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--card-border)', backgroundColor: 'rgba(var(--muted), 0.2)' }}>
@@ -569,17 +1049,21 @@ const ShiftSchedulerContent = ({ userRole }: ShiftSchedulerContentProps) => {
                                 {Array.from({ length: days }).map((_, i) => {
                                     const day = i + 1;
                                     const dayName = getDayName(day);
+                                    const isToday = new Date().getFullYear() === currentDate.getFullYear() &&
+                                        new Date().getMonth() === currentDate.getMonth() &&
+                                        new Date().getDate() === day;
                                     return (
                                         <th key={day} style={{
                                             padding: '0.5rem 0.375rem',
                                             textAlign: 'center',
                                             minWidth: '45px',
                                             borderRight: '1px solid var(--card-border)',
-                                            backgroundColor: 'var(--background)'
+                                            backgroundColor: isToday ? 'rgba(59, 130, 246, 0.15)' : 'var(--background)',
+                                            borderBottom: isToday ? '3px solid rgba(59, 130, 246, 0.8)' : undefined
                                         }}>
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem' }}>
-                                                <span style={{ fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', color: getDayColor(dayName) }}>{dayName}</span>
-                                                <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--foreground)' }}>{day}</span>
+                                                <span style={{ fontSize: '9px', fontWeight: 700, textTransform: 'uppercase', color: isToday ? 'rgb(59, 130, 246)' : getDayColor(dayName) }}>{dayName}</span>
+                                                <span style={{ fontSize: '11px', fontWeight: 600, color: isToday ? 'rgb(59, 130, 246)' : 'var(--foreground)' }}>{day}</span>
                                             </div>
                                         </th>
                                     );
@@ -621,7 +1105,18 @@ const ShiftSchedulerContent = ({ userRole }: ShiftSchedulerContentProps) => {
                                                 overflow: 'hidden',
                                                 flexShrink: 0
                                             }}>
-                                                <img src={staff.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${staff.name}`} alt={staff.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                <img
+                                                    src={getAvatarUrl(staff.avatar, staff.name)}
+                                                    alt={staff.name}
+                                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                                    onError={(e) => {
+                                                        const target = e.target as HTMLImageElement;
+                                                        const fallback = `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(staff.name)}`;
+                                                        if (target.src !== fallback) {
+                                                            target.src = fallback;
+                                                        }
+                                                    }}
+                                                />
                                             </div>
                                             <span style={{ fontWeight: 500, fontSize: '0.65rem', color: 'var(--foreground)', textTransform: 'uppercase', letterSpacing: '0.025em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100px' }}>{staff.name}</span>
                                         </div>
@@ -631,7 +1126,9 @@ const ShiftSchedulerContent = ({ userRole }: ShiftSchedulerContentProps) => {
                                         const dayShifts = getStaffShiftsForDay(staff.id, day);
                                         const dayName = getDayName(day);
                                         const isWeekend = dayName === 'CMT' || dayName === 'PAZ';
-                                        const isToday = day === 19;
+                                        const isToday = new Date().getFullYear() === currentDate.getFullYear() &&
+                                            new Date().getMonth() === currentDate.getMonth() &&
+                                            new Date().getDate() === day;
 
                                         return (
                                             <td

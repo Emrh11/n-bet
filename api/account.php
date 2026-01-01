@@ -51,18 +51,19 @@ if (function_exists('getDB')) {
 }
 
 // Kullanıcı ID'sini alma fonksiyonu (JWT Secret olmadan payload okuma)
-function getUserIdFromToken() {
+function getUserIdFromToken()
+{
     global $userId;
-    
+
     // 1. Config.php'den gelen
     if (!empty($userId)) {
         return $userId;
     }
-    
+
     // 2. Header'dan oku
     $headers = getallheaders();
     $authHeader = $headers['Authorization'] ?? $headers['authorization'] ?? '';
-    
+
     if (preg_match('/Bearer\s(\S+)/', $authHeader, $matches)) {
         $token = $matches[1];
         $parts = explode('.', $token);
@@ -71,7 +72,7 @@ function getUserIdFromToken() {
             return $payload['user_id'] ?? $payload['id'] ?? null;
         }
     }
-    
+
     return null;
 }
 
@@ -101,7 +102,7 @@ switch ($method) {
             echo json_encode(['error' => 'User not found']);
             exit;
         }
-        
+
         // Avatar URL düzeltme
         if (!empty($user['avatar']) && !str_starts_with($user['avatar'], 'http')) {
             $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
@@ -113,7 +114,7 @@ switch ($method) {
         echo json_encode($user);
         break;
 
-    case 'POST': 
+    case 'POST':
         $fields = [];
         $values = [];
 
@@ -129,25 +130,29 @@ switch ($method) {
             $fields[] = 'phone = ?';
             $values[] = $body['phone'];
         }
+        if (isset($body['avatar'])) {
+            $fields[] = 'avatar = ?';
+            $values[] = $body['avatar'];
+        }
 
         // Dosya Yükleme
         if (isset($_FILES['avatar']) && $_FILES['avatar']['error'] === UPLOAD_ERR_OK) {
             // Uploads klasörü api'nin bir üstünde varsayıyoruz
             $uploadDir = __DIR__ . '/../uploads/';
-            
+
             // Klasör yoksa oluştur (izin hatası olabilir ama deneyelim)
             if (!file_exists($uploadDir)) {
                 @mkdir($uploadDir, 0777, true);
             }
-            
+
             $fileInfo = pathinfo($_FILES['avatar']['name']);
             $ext = strtolower($fileInfo['extension']);
             $allowed = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
-            
+
             if (in_array($ext, $allowed)) {
                 $newFileName = 'avatar_' . $currentUserId . '_' . time() . '.' . $ext;
                 $destPath = $uploadDir . $newFileName;
-                
+
                 if (move_uploaded_file($_FILES['avatar']['tmp_name'], $destPath)) {
                     $fields[] = 'avatar = ?';
                     $values[] = $newFileName;
@@ -165,22 +170,22 @@ switch ($method) {
 
         $values[] = $currentUserId;
         $sql = "UPDATE nobet_personnel SET " . implode(', ', $fields) . " WHERE id = ?";
-        
+
         try {
             $stmt = $db->prepare($sql);
             $stmt->execute($values);
-            
+
             // Güncel veriyi çek
             $stmt = $db->prepare("SELECT id, name, email, phone, username, role, avatar FROM nobet_personnel WHERE id = ?");
             $stmt->execute([$currentUserId]);
             $updatedUser = $stmt->fetch(PDO::FETCH_ASSOC);
-            
+
             if (!empty($updatedUser['avatar']) && !str_starts_with($updatedUser['avatar'], 'http')) {
                 $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http";
                 $host = $_SERVER['HTTP_HOST'];
                 $updatedUser['avatar'] = "$protocol://$host/uploads/" . $updatedUser['avatar'];
             }
-            
+
             header('Content-Type: application/json');
             echo json_encode($updatedUser);
         } catch (PDOException $e) {

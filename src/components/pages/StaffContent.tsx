@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
-import { Plus, Filter, MoreVertical, Trash2, Edit, X, Loader2, User, Mail, Phone, Key, UserCog } from 'lucide-react';
-import { getAllPersonnel, createPersonnel, updatePersonnel, deletePersonnel } from '../../services/personnelService';
-import type { Personnel, CreatePersonnelData, UpdatePersonnelData } from '../../services/personnelService';
+import { Edit, Filter, Key, Loader2, Mail, MoreVertical, Phone, Plus, Trash2, User, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { CreatePersonnelData, Personnel, UpdatePersonnelData } from '../../services/personnelService';
+import { createPersonnel, deletePersonnel, getAllPersonnel, updatePersonnel } from '../../services/personnelService';
+import { getAvatarUrl } from '../../utils/avatarUtils';
 
 const StaffContent = () => {
     const [personnel, setPersonnel] = useState<Personnel[]>([]);
@@ -252,19 +253,29 @@ const StaffContent = () => {
                                         <td style={{ padding: '0.5rem 1rem' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                                 <div style={{
-                                                    width: '1.75rem',
-                                                    height: '1.75rem',
-                                                    borderRadius: '0.5rem',
+                                                    width: '2.25rem',
+                                                    height: '2.25rem',
+                                                    borderRadius: '0.625rem',
                                                     backgroundColor: 'var(--muted)',
                                                     display: 'flex',
                                                     alignItems: 'center',
                                                     justifyContent: 'center',
                                                     border: '1px solid var(--card-border)',
-                                                    fontSize: '0.75rem',
-                                                    fontWeight: 700,
-                                                    color: 'var(--foreground)'
+                                                    overflow: 'hidden',
+                                                    flexShrink: 0
                                                 }}>
-                                                    {person.name.charAt(0).toUpperCase()}
+                                                    <img
+                                                        src={getAvatarUrl(person.avatar, person.name)}
+                                                        alt={person.name}
+                                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                                        onError={(e) => {
+                                                            const target = e.target as HTMLImageElement;
+                                                            const fallback = `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(person.name)}`;
+                                                            if (target.src !== fallback) {
+                                                                target.src = fallback;
+                                                            }
+                                                        }}
+                                                    />
                                                 </div>
                                                 <div>
                                                     <p style={{ fontWeight: 500, fontSize: '0.875rem', color: 'var(--foreground)' }}>

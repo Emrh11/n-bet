@@ -1,11 +1,13 @@
 
-import { useState, useEffect } from 'react';
-import { Users, UserCheck, FileText, Activity, Calendar, Clock, ArrowRight, Loader2 } from 'lucide-react';
-import StatCard from '../ui/StatCard';
-import { getAllPersonnel } from '../../services/personnelService';
-import { getShiftsByMonth } from '../../services/shiftsService';
+import { Activity, ArrowRight, Calendar, Clock, FileText, Loader2, Users } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { getAllExchanges } from '../../services/exchangesService';
-import { getAllShiftDefinitions, type ShiftDefinition } from '../../services/shiftDefinitionsService';
+import { getAllPersonnel } from '../../services/personnelService';
+import { getAllShiftDefinitions } from '../../services/shiftDefinitionsService';
+import { getShiftsByMonth } from '../../services/shiftsService';
+import { calculateStaffHakedis } from '../../utils/hakedisUtils';
+import StatCard from '../ui/StatCard';
+import type { ShiftAssignment } from './ShiftSchedulerContent';
 
 interface DashboardProps {
     onNavigate?: (page: string) => void;
@@ -34,7 +36,6 @@ const DashboardContent = ({ onNavigate }: DashboardProps) => {
 
     const currentUserId = Number(JSON.parse(localStorage.getItem('userData') || '{}')?.id) || 0;
     const currentMonth = new Date().getMonth() + 1;
-    const currentYear = new Date().getFullYear();
     const today = new Date().toISOString().split('T')[0];
 
     const dayNames = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
@@ -56,25 +57,53 @@ const DashboardContent = ({ onNavigate }: DashboardProps) => {
         const fetchDashboardData = async () => {
             setIsLoading(true);
             try {
-                const [personnel, shifts, exchanges, shiftDefinitions] = await Promise.all([
+                // Fetch basic data first
+                const [personnel, exchanges, shiftDefinitions] = await Promise.all([
                     getAllPersonnel(),
-                    getShiftsByMonth(currentMonth, currentYear),
                     getAllExchanges(),
                     getAllShiftDefinitions()
                 ]);
+
+                // Get all relevant months for the 5-day window
+                const weekDates = getWeekDates();
+                const monthsToFetch = [...new Set(weekDates.map(d => {
+                    const parts = d.split('-');
+                    return `${parts[0]}-${parseInt(parts[1])}`;
+                }))];
+
+                // Fetch shifts for all relevant months
+                const shiftResults = await Promise.all(
+                    monthsToFetch.map(ym => {
+                        const [y, m] = ym.split('-').map(Number);
+                        return getShiftsByMonth(m, y);
+                    })
+                );
+                const shifts = shiftResults.flat();
 
                 // Toplam personel
                 const totalPersonnel = personnel.length;
                 const activePersonnel = personnel.filter(p => p.is_on_duty).length;
 
-                // Haftalık nöbetler (7 gün)
-                const NOBET_ID = 2;
-                const weekDates = getWeekDates();
+                // Haftalık nöbetler (5 gün)
+                // Dynamically find Nöbet ID if possible, include YB (Yılbaşı) for holiday context
+                const nobetDef = shiftDefinitions.find(d =>
+                    d.name.toLowerCase().includes('nöbet') ||
+                    d.shortName.toLowerCase() === 'n' ||
+                    d.code.toLowerCase() === 'n' ||
+                    d.shortName.toLowerCase() === 'yb' ||
+                    d.code.toLowerCase() === 'yb' ||
+                    d.name.toLowerCase().includes('yılbaşı')
+                );
+                const NOBET_ID = nobetDef ? nobetDef.id : 2;
 
                 const weeklyShiftsList: WeeklyShift[] = weekDates.map(date => {
-                    const dayShifts = shifts.filter(s =>
-                        s.date === date && s.shift_definition_id === NOBET_ID
-                    );
+                    // Filter shifts for this date.
+                    // Use includes for date matching to handle potential timestamp strings
+                    let dayShifts = shifts.filter(s => s.date.includes(date) && Number(s.shift_definition_id) === NOBET_ID);
+
+                    if (dayShifts.length === 0) {
+                        dayShifts = shifts.filter(s => s.date.includes(date));
+                    }
 
                     const personNames = dayShifts.map(s => {
                         const person = personnel.find(p => p.id === s.personnel_id);
@@ -95,44 +124,53 @@ const DashboardContent = ({ onNavigate }: DashboardProps) => {
 
                 setWeeklyShifts(weeklyShiftsList);
 
-                // Personelin Aylık Fazla Mesai Toplamı Hesaplama
-                let totalOvertimeHours = 0;
+                // Personelin Aylık Fazla Mesai Toplamı Hesaplama (Merkezi Hesaplama Kullan)
+                const now = new Date();
+                const currentYear = now.getFullYear();
+                const currentMonthNum = now.getMonth() + 1;
+                const currentMonthKey = `${currentYear}-${String(currentMonthNum).padStart(2, '0')}`;
 
-                // Shift definition map for faster lookup
-                const defMap = new Map<number, ShiftDefinition>();
-                shiftDefinitions.forEach(def => defMap.set(def.id, def));
-
-                const dayKeyMap: { [key: number]: keyof ShiftDefinition['overtime'] } = {
-                    0: 'paz', // Sunday
-                    1: 'pzt', // Monday
-                    2: 'sal', // Tuesday
-                    3: 'car', // Wednesday
-                    4: 'per', // Thursday
-                    5: 'cum', // Friday
-                    6: 'cmt'  // Saturday
-                };
-
+                // Shift'leri ShiftsMap formatına dönüştür
+                const shiftsMap: { [date: string]: ShiftAssignment[] } = {};
                 shifts.forEach(shift => {
-                    // Sadece giriş yapan kullanıcının vardiyalarını hesapla
-                    if (shift.personnel_id === currentUserId && shift.shift_definition_id && defMap.has(shift.shift_definition_id)) {
-                        const def = defMap.get(shift.shift_definition_id)!;
-                        const date = new Date(shift.date);
-                        const dayOfWeek = date.getDay();
-                        const key = dayKeyMap[dayOfWeek];
-
-                        // Add hours for this specific day
-                        totalOvertimeHours += def.overtime[key] || 0;
+                    const dateKey = shift.date.split('T')[0];
+                    if (!shiftsMap[dateKey]) {
+                        shiftsMap[dateKey] = [];
                     }
+                    shiftsMap[dateKey].push({
+                        id: shift.id,
+                        staffId: shift.personnel_id,
+                        shiftCode: shiftDefinitions.find(d => d.id === Number(shift.shift_definition_id))?.code || '',
+                        shiftDefinitionId: Number(shift.shift_definition_id)
+                    });
                 });
+
+
+                // Kullanıcının hakediş hesaplamasını yap
+                const hakedis = calculateStaffHakedis(
+                    currentUserId,
+                    currentMonthNum,
+                    currentYear,
+                    shiftsMap,
+                    shiftDefinitions
+                );
+
+                // Net Fazla Mesai = Toplam Fazla - Toplam Eksik
+                const netFazlaMesai = hakedis.totalExcessHours - hakedis.totalMissingHours;
 
                 // Bu ayki nöbetlerim
                 const myShifts = shifts.filter(s =>
-                    s.personnel_id === currentUserId && s.shift_definition_id === NOBET_ID
+                    s.date.startsWith(currentMonthKey) &&
+                    s.personnel_id === currentUserId &&
+                    s.shift_definition_id === NOBET_ID
                 );
 
                 // Gelecek nöbetlerim (bugün ve sonrası)
-                const upcomingShifts = myShifts
-                    .filter(s => s.date >= today)
+                const upcomingShifts = shifts.filter(s =>
+                    s.date >= today &&
+                    s.personnel_id === currentUserId &&
+                    s.shift_definition_id === NOBET_ID
+                )
                     .sort((a, b) => a.date.localeCompare(b.date))
                     .slice(0, 3)
                     .map(s => ({
@@ -141,7 +179,7 @@ const DashboardContent = ({ onNavigate }: DashboardProps) => {
                     }));
                 setMyUpcomingShifts(upcomingShifts);
 
-                // Bekleyen değişim talepleri
+                // Bekleyen değişim talepleri - BU AY ile sınırlamaya gerek yok, genel bekleyenler
                 const pendingExchanges = exchanges.filter(e =>
                     e.status === 'pending' || e.status === 'target_approved'
                 ).length;
@@ -149,10 +187,11 @@ const DashboardContent = ({ onNavigate }: DashboardProps) => {
                 setStats({
                     totalPersonnel,
                     activePersonnel,
-                    totalMonthlyOvertime: totalOvertimeHours,
+                    totalMonthlyOvertime: netFazlaMesai,
                     myShiftsThisMonth: myShifts.length,
                     pendingExchanges
                 });
+
             } catch (err) {
                 console.error('Dashboard verileri yüklenemedi:', err);
             } finally {
@@ -161,7 +200,7 @@ const DashboardContent = ({ onNavigate }: DashboardProps) => {
         };
 
         fetchDashboardData();
-    }, [currentMonth, currentYear, today, currentUserId]);
+    }, [today, currentUserId]);
 
     // Format date
     const formatDate = (dateStr: string) => {

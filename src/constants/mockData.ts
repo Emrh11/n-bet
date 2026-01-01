@@ -34,11 +34,11 @@ export interface ShiftDefinition {
 }
 
 export const STAFF_LIST: Staff[] = [
-  { id: 1, name: 'Ahmet Yılmaz', role: 'Developer', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Ahmet' },
-  { id: 2, name: 'Ayşe Demir', role: 'Designer', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Ayse' },
-  { id: 3, name: 'Mehmet Kaya', role: 'DevOps', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Mehmet' },
-  { id: 4, name: 'Selin Vural', role: 'Manager', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Selin' },
-  { id: 5, name: 'Caner Erkin', role: 'Sales', avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Caner' },
+  { id: 1, name: 'Ahmet Yılmaz', role: 'Developer', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=Ahmet' },
+  { id: 2, name: 'Ayşe Demir', role: 'Designer', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=Ayse' },
+  { id: 3, name: 'Mehmet Kaya', role: 'DevOps', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=Mehmet' },
+  { id: 4, name: 'Selin Vural', role: 'Manager', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=Selin' },
+  { id: 5, name: 'Caner Erkin', role: 'Sales', avatar: 'https://api.dicebear.com/9.x/avataaars/svg?seed=Caner' },
 ];
 
 export const INITIAL_SHIFT_DEFINITIONS: ShiftDefinition[] = [

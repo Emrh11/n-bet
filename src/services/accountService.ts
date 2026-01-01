@@ -16,6 +16,7 @@ export interface UpdateAccountData {
     name?: string;
     email?: string;
     phone?: string;
+    avatar?: string;
 }
 
 const getAuthHeaders = () => {

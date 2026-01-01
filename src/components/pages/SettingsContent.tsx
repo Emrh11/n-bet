@@ -1,7 +1,14 @@
-
-import { useState, useEffect, useRef } from 'react';
-import { Camera, Save, User, Mail, Phone, Loader2 } from 'lucide-react';
+import { Camera, Check, Loader2, Mail, Phone, Save, User } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { getAccount, updateAccount } from '../../services/accountService';
+import { AVATAR_STYLES, getAvatarUrl } from '../../utils/avatarUtils';
+
+const SEEDS = [
+    'Felix', 'Aneka', 'Charlie', 'Luna', 'Kiki',
+    'Milo', 'Misty', 'Jasper', 'Oliver', 'Shadow',
+    'Sophie', 'Max', 'Bella', 'Leo', 'Chloe',
+    'Oscar', 'Lily', 'Jack', 'Lucy', 'Cooper'
+];
 
 const SettingsContent = () => {
     const [profileData, setProfileData] = useState({
@@ -10,23 +17,14 @@ const SettingsContent = () => {
         phone: '',
         avatar: ''
     });
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
-    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [selectedStyle, setSelectedStyle] = useState(AVATAR_STYLES[0]);
+    const [showAvatarPicker, setShowAvatarPicker] = useState(false);
 
     useEffect(() => {
         loadProfile();
     }, []);
-
-    useEffect(() => {
-        if (selectedFile) {
-            const objectUrl = URL.createObjectURL(selectedFile);
-            setPreviewUrl(objectUrl);
-            return () => URL.revokeObjectURL(objectUrl);
-        }
-    }, [selectedFile]);
 
     const loadProfile = async () => {
         try {
@@ -44,38 +42,20 @@ const SettingsContent = () => {
         }
     };
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            const file = e.target.files[0];
-            if (file.size > 2 * 1024 * 1024) {
-                alert('Dosya boyutu 2MB\'dan küçük olmalıdır.');
-                return;
-            }
-            setSelectedFile(file);
-        }
+    const handleAvatarSelect = (url: string) => {
+        setProfileData({ ...profileData, avatar: url });
+        setShowAvatarPicker(false);
     };
 
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            let dataToSend: any;
-
-            if (selectedFile) {
-                const formData = new FormData();
-                formData.append('name', profileData.name);
-                formData.append('email', profileData.email);
-                formData.append('phone', profileData.phone);
-                formData.append('avatar', selectedFile);
-                dataToSend = formData;
-            } else {
-                dataToSend = {
-                    name: profileData.name,
-                    email: profileData.email,
-                    phone: profileData.phone
-                };
-            }
-
-            const updatedProfile = await updateAccount(dataToSend);
+            const updatedProfile = await updateAccount({
+                name: profileData.name,
+                email: profileData.email,
+                phone: profileData.phone,
+                avatar: profileData.avatar
+            });
 
             setProfileData({
                 name: updatedProfile.name,
@@ -84,20 +64,11 @@ const SettingsContent = () => {
                 avatar: updatedProfile.avatar || ''
             });
 
-            setSelectedFile(null);
-            setPreviewUrl(null);
-
-            // Update local storage user data to reflect changes immediately in UI (like sidebar name)
+            // Update local storage user data to reflect changes immediately in UI
             const userData = JSON.parse(localStorage.getItem('userData') || '{}');
             localStorage.setItem('userData', JSON.stringify({ ...userData, ...updatedProfile }));
 
             alert('Profil bilgileriniz güncellendi!');
-
-            // Force reload to update sidebar avatar if changed
-            if (selectedFile) {
-                window.location.reload();
-            }
-
         } catch (error) {
             console.error('Kaydetme hatası:', error);
             alert('Değişiklikler kaydedilirken bir hata oluştu.');
@@ -115,7 +86,7 @@ const SettingsContent = () => {
     }
 
     return (
-        <div className="animate-fade-in" style={{ maxWidth: '48rem', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+        <div className="animate-fade-in" style={{ maxWidth: '48rem', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingBottom: '3rem' }}>
             {/* Page Header */}
             <div>
                 <h2 style={{ fontSize: '1.5rem', fontWeight: 700, letterSpacing: '-0.025em', marginBottom: '0.25rem' }}>
@@ -126,60 +97,122 @@ const SettingsContent = () => {
                 </p>
             </div>
 
-            {/* Profile Photo Section */}
+            {/* Avatar Section */}
             <div className="phase-card" style={{ overflow: 'hidden' }}>
-                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--card-border)' }}>
-                    <h3 style={{ fontWeight: 600, fontSize: '1rem', letterSpacing: '-0.025em' }}>Profil Fotoğrafı</h3>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--card-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3 style={{ fontWeight: 600, fontSize: '1rem', letterSpacing: '-0.025em' }}>Avatarınız</h3>
                 </div>
-                <div style={{ padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                    <div style={{
-                        width: '6rem',
-                        height: '6rem',
-                        borderRadius: '50%',
-                        backgroundColor: 'var(--muted)',
-                        border: '3px solid var(--card-border)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        position: 'relative',
-                        overflow: 'hidden'
-                    }}>
-                        {(previewUrl || profileData.avatar) ? (
+                <div style={{ padding: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginBottom: '1.5rem' }}>
+                        <div style={{
+                            width: '6rem',
+                            height: '6rem',
+                            borderRadius: '1rem',
+                            backgroundColor: 'var(--muted)',
+                            border: '3px solid var(--card-border)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            position: 'relative',
+                            overflow: 'hidden'
+                        }}>
                             <img
-                                src={previewUrl || profileData.avatar}
+                                src={getAvatarUrl(profileData.avatar, profileData.name)}
                                 alt="Profile"
                                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                             />
-                        ) : (
-                            <User size={32} style={{ color: 'var(--muted-foreground)' }} />
-                        )}
+                        </div>
+                        <div>
+                            <button
+                                onClick={() => setShowAvatarPicker(!showAvatarPicker)}
+                                className="phase-button"
+                                style={{ fontSize: '0.875rem' }}
+                            >
+                                <Camera size={16} />
+                                Avatar Seç
+                            </button>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', marginTop: '0.5rem' }}>
+                                DiceBear kütüphanesinden size en uygun avatarı seçin.
+                            </p>
+                        </div>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                        <input
-                            type="file"
-                            ref={fileInputRef}
-                            onChange={handleFileChange}
-                            accept="image/*"
-                            style={{ display: 'none' }}
-                        />
-                        <button
-                            onClick={() => fileInputRef.current?.click()}
-                            className="phase-button"
-                            style={{
-                                fontSize: '0.8125rem',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.5rem',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            <Camera size={16} />
-                            Fotoğraf Değiştir
-                        </button>
-                        <p style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)' }}>
-                            JPG, PNG veya GIF. Maksimum 2MB.
-                        </p>
-                    </div>
+
+                    {showAvatarPicker && (
+                        <div className="animate-fade-in" style={{ borderTop: '1px solid var(--card-border)', paddingTop: '1.5rem' }}>
+                            {/* Style Selection (Groups) */}
+                            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
+                                {AVATAR_STYLES.map(style => (
+                                    <button
+                                        key={style}
+                                        onClick={() => setSelectedStyle(style)}
+                                        style={{
+                                            padding: '0.375rem 0.875rem',
+                                            borderRadius: '9999px',
+                                            fontSize: '0.75rem',
+                                            fontWeight: 600,
+                                            border: '1px solid var(--card-border)',
+                                            backgroundColor: selectedStyle === style ? 'var(--foreground)' : 'var(--muted)',
+                                            color: selectedStyle === style ? 'var(--background)' : 'var(--foreground)',
+                                            textTransform: 'capitalize',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        {style.replace(/-/g, ' ')}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* Variations Grid */}
+                            <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(auto-fill, minmax(80px, 1fr))',
+                                gap: '1rem'
+                            }}>
+                                {SEEDS.map(seed => {
+                                    const url = `https://api.dicebear.com/9.x/${selectedStyle}/svg?seed=${seed}`;
+                                    const isSelected = profileData.avatar === url;
+                                    return (
+                                        <div
+                                            key={seed}
+                                            onClick={() => handleAvatarSelect(url)}
+                                            style={{
+                                                aspectRatio: '1',
+                                                borderRadius: '0.75rem',
+                                                backgroundColor: 'var(--muted)',
+                                                border: `2px solid ${isSelected ? 'var(--foreground)' : 'var(--card-border)'}`,
+                                                cursor: 'pointer',
+                                                position: 'relative',
+                                                overflow: 'hidden',
+                                                transition: 'transform 0.2s'
+                                            }}
+                                            onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.05)')}
+                                            onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                                        >
+                                            <img src={url} alt={seed} style={{ width: '100%', height: '100%' }} />
+                                            {isSelected && (
+                                                <div style={{
+                                                    position: 'absolute',
+                                                    top: '4px',
+                                                    right: '4px',
+                                                    backgroundColor: 'var(--foreground)',
+                                                    color: 'var(--background)',
+                                                    borderRadius: '50%',
+                                                    width: '18px',
+                                                    height: '18px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center'
+                                                }}>
+                                                    <Check size={12} strokeWidth={3} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 

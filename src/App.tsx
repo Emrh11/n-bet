@@ -1,26 +1,38 @@
-import { useState, useEffect, useCallback } from 'react';
 import {
-  Users, LayoutDashboard, Settings, LogOut, Bell, Search, Menu, X,
-  Calendar, FileText, Shield, Sun, Moon, ChevronRight,
-  Briefcase
+  Bell,
+  Calendar,
+  ChevronRight,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Moon,
+  Search,
+  Settings,
+  Shield, Sun,
+  Users,
+  X
 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
 // Import styles
 import './styles/theme.css';
 
 // Import components
-import NavItem from './components/ui/NavItem';
-import LoginPage from './components/pages/LoginPage';
 import DashboardContent from './components/pages/DashboardContent';
-import StaffContent from './components/pages/StaffContent';
-import ShiftSchedulerContent from './components/pages/ShiftSchedulerContent';
+import LoginPage from './components/pages/LoginPage';
+import ReportsContent from './components/pages/ReportsContent';
+import RolesContent from './components/pages/RolesContent';
+import SettingsContent from './components/pages/SettingsContent';
 import ShiftChangeContent from './components/pages/ShiftChangeContent';
 import ShiftDefinitionsContent from './components/pages/ShiftDefinitionsContent';
-import ReportsContent from './components/pages/ReportsContent';
-import SettingsContent from './components/pages/SettingsContent';
-import RolesContent from './components/pages/RolesContent';
-import { getNotifications, markAsRead, getNotificationIcon, getNotificationColor } from './services/notificationsService';
+import ShiftSchedulerContent from './components/pages/ShiftSchedulerContent';
+import StaffContent from './components/pages/StaffContent';
+import NavItem from './components/ui/NavItem';
+import { getAccount } from './services/accountService';
 import type { Notification } from './services/notificationsService';
+import { getNotificationColor, getNotificationIcon, getNotifications, markAsRead } from './services/notificationsService';
+import { getAvatarUrl } from './utils/avatarUtils';
 
 type ActivePage = 'dashboard' | 'staff' | 'schedule' | 'requests' | 'definitions' | 'reports' | 'settings' | 'roles';
 type UserRole = 'admin' | 'user';
@@ -33,7 +45,21 @@ interface User {
 }
 
 function App() {
-  const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    // Default to true (dark) if not set, otherwise parse saved value
+    return savedTheme !== null ? savedTheme === 'dark' : true;
+  });
+
+  // Save theme to localStorage and apply to html element
+  useEffect(() => {
+    localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
   const [activePage, setActivePage] = useState<ActivePage>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
@@ -51,7 +77,7 @@ function App() {
         return {
           email: parsed.email || '',
           name: parsed.name || '',
-          avatar: parsed.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${parsed.name}`,
+          avatar: getAvatarUrl(parsed.avatar, parsed.name),
           role: parsed.role || 'user'
         };
       } catch {
@@ -78,14 +104,59 @@ function App() {
     }
   }, [isLoggedIn]);
 
-  // Fetch notifications on login and periodically
+  // Fetch user profile to keep avatar/name in sync
+  const fetchUserProfile = useCallback(async () => {
+    if (!isLoggedIn) return;
+    try {
+      const userData = await getAccount();
+      if (userData) {
+        // Update local state
+        const updatedUser: User = {
+          email: userData.email || '',
+          name: userData.name || '',
+          avatar: getAvatarUrl(userData.avatar, userData.name),
+          role: (userData.role as UserRole) || 'user'
+        };
+
+        setCurrentUser(updatedUser);
+
+        // Sync back to localStorage for next session
+        const storedData = JSON.parse(localStorage.getItem('userData') || '{}');
+        localStorage.setItem('userData', JSON.stringify({
+          ...storedData,
+          ...userData,
+          avatar: userData.avatar // Store target path, getAvatarUrl handles the rest
+        }));
+      }
+    } catch (err) {
+      console.error('Profil güncellenemedi:', err);
+    }
+  }, [isLoggedIn]);
+
+  // Fetch notifications and profile on login and periodically
   useEffect(() => {
     if (isLoggedIn) {
       fetchNotifications();
-      const interval = setInterval(fetchNotifications, 15000); // Her 15 saniyede kontrol et
-      return () => clearInterval(interval);
+      fetchUserProfile();
+
+      const interval = setInterval(() => {
+        fetchNotifications();
+        fetchUserProfile();
+      }, 30000); // Her 30 saniyede bir profil ve bildirimleri kontrol et
+
+      // Also refresh when tab becomes active
+      const handleFocus = () => {
+        fetchNotifications();
+        fetchUserProfile();
+      };
+
+      window.addEventListener('focus', handleFocus);
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('focus', handleFocus);
+      };
     }
-  }, [isLoggedIn, fetchNotifications]);
+  }, [isLoggedIn, fetchNotifications, fetchUserProfile]);
 
   // Handle mark all as read
   const handleMarkAllRead = async () => {
@@ -119,7 +190,7 @@ function App() {
     setCurrentUser({
       email: userData.email || '',
       name: userData.name || username,
-      avatar: userData.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`,
+      avatar: getAvatarUrl(userData.avatar, userData.name || username),
       role: userData.role || 'user'
     });
     setIsLoggedIn(true);
@@ -192,19 +263,19 @@ function App() {
             alignItems: 'center',
             gap: '0.75rem'
           }}>
-            <div style={{
-              width: '2rem',
-              height: '2rem',
-              borderRadius: '0.5rem',
-              background: 'linear-gradient(135deg, var(--foreground) 0%, var(--muted-foreground) 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}>
-              <Briefcase size={16} style={{ color: 'var(--background)' }} />
-            </div>
+            <img
+              src={isDarkMode ? '/icon_white.png' : '/icon_black.png'}
+              alt="Logo"
+              style={{
+                width: '2rem',
+                height: '2rem',
+                objectFit: 'contain'
+              }}
+            />
             <span style={{ fontWeight: 700, fontSize: '1.125rem', letterSpacing: '-0.025em' }}>Nöbet Sistemi</span>
           </div>
+
+
 
           {/* Navigation */}
           <nav style={{ flex: 1, padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
@@ -245,9 +316,16 @@ function App() {
               flexShrink: 0
             }}>
               <img
-                src={currentUser?.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=default'}
+                src={currentUser?.avatar}
                 alt={currentUser?.name || 'User'}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  const fallback = `https://api.dicebear.com/9.x/avataaars/svg?seed=${encodeURIComponent(currentUser?.name || 'default')}`;
+                  if (target.src !== fallback) {
+                    target.src = fallback;
+                  }
+                }}
               />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
