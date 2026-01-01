@@ -43,7 +43,12 @@ const SettingsContent = () => {
     };
 
     const handleAvatarSelect = (url: string) => {
-        setProfileData({ ...profileData, avatar: url });
+        // Normalize URL to short format (e.g. "big-smile:Felix") before putting in state
+        const normalizedAvatar = url.includes('api.dicebear.com')
+            ? url.split('/').slice(-2, -1)[0] + ':' + new URL(url).searchParams.get('seed')
+            : url;
+
+        setProfileData({ ...profileData, avatar: normalizedAvatar });
         setShowAvatarPicker(false);
     };
 
@@ -54,7 +59,7 @@ const SettingsContent = () => {
                 name: profileData.name,
                 email: profileData.email,
                 phone: profileData.phone,
-                avatar: profileData.avatar
+                avatar: profileData.avatar // This is already normalized or a relative path
             });
 
             setProfileData({
@@ -63,6 +68,7 @@ const SettingsContent = () => {
                 phone: updatedProfile.phone,
                 avatar: updatedProfile.avatar || ''
             });
+
 
             // Update local storage user data to reflect changes immediately in UI
             const userData = JSON.parse(localStorage.getItem('userData') || '{}');
