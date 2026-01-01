@@ -158,12 +158,19 @@ export const calculateStaffHakedis = (
             // Resmi tatile denk gelen nöbet ertesi
             if (isHoliday) {
                 shiftType = `Nöbet Ertesi (${holidayName || 'Resmi Tatil'})`;
-                expectedHours = 0; // Resmi tatil - tüm çalışma fazla mesai
+                expectedHours = 0; // Bugün de resmi tatil - kesinti yok
             }
-            // Önceki gün arife veya resmi tatil ise kesinti yok
+            // Önceki gün arife veya resmi tatil ise
             else if (isPrevDayArife || isPrevDayHoliday) {
-                shiftType = 'Nöbet Ertesi';
-                expectedHours = 0; // Tatil sonrası - kesinti yok
+                // Bugün hafta içi VE resmi tatil değilse → kesinti var (pazar gibi)
+                // Bugün hafta sonu VEYA resmi tatil ise → kesinti yok
+                if (!isWeekend && !isHoliday) {
+                    shiftType = 'Nöbet Ertesi (Kesintili)';
+                    expectedHours = 10; // Hafta içi - 2 saat kesinti olacak
+                } else {
+                    shiftType = 'Nöbet Ertesi';
+                    expectedHours = 0; // Hafta sonu veya tatil - kesinti yok
+                }
             }
             // Normal nöbet ertesi
             else {
@@ -171,6 +178,7 @@ export const calculateStaffHakedis = (
                 expectedHours = isWeekend ? 0 : 10;
             }
         }
+
         // 3. RESMİ TATİL (vardiya yok)
         else if (isHoliday) {
             shiftType = holidayName || 'Resmi Tatil';
